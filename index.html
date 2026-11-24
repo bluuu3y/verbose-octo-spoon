@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Krissel’s Lost and Found Management</title>
+<style>
+:root{--blue:#1565c0;--dark:#0d47a1;--light:#e3f2fd;--bg:#f5f9ff;--card:#fff;--text:#1f2937;--muted:#6b7280;--line:#cfd8e3;--bad:#c62828;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1a2b;--card:#16263d;--text:#e6edf7;--muted:#9fb0c8;--line:#2c4160;--light:#1b3558;--blue:#4d9bf0;--dark:#82bcf8}}
+:root[data-theme="dark"]{--bg:#0e1a2b;--card:#16263d;--text:#e6edf7;--muted:#9fb0c8;--line:#2c4160;--light:#1b3558;--blue:#4d9bf0;--dark:#82bcf8}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;font:16px/1.5 Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+header{background:var(--blue);color:#fff;padding:12px 16px}
+:root[data-theme="dark"] header,:root:not([data-theme="light"]) header{color:#fff}
+header h1{margin:0 0 8px;font-size:1.1rem}
+nav{display:flex;flex-wrap:wrap;gap:6px}
+nav button{background:transparent;color:#fff;border:0;padding:7px 14px;border-radius:6px;font-size:1rem;cursor:pointer}
+nav button.on,nav button:hover{background:rgba(0,0,0,.25)}
+main{max-width:1000px;margin:0 auto;padding:16px}
+h2{color:var(--dark);margin:0 0 6px}.muted{color:var(--muted)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--card);border-left:6px solid var(--blue);border-radius:8px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.card b{display:block;font-size:2.1rem;color:var(--blue)}
+.btn{background:var(--blue);color:#fff;border:2px solid var(--blue);padding:8px 14px;border-radius:6px;font-size:1rem;cursor:pointer}
+:root[data-theme="dark"] .btn,:root:not([data-theme="light"]) .btn{color:#06121f}
+.btn.o{background:transparent;color:var(--blue)}.btn.s{padding:4px 10px;font-size:.9rem}.btn.d{background:var(--bad);border-color:var(--bad);color:#fff}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;font:inherit;background:var(--card);color:var(--text)}
+.bar input,.bar select{flex:1;min-width:150px;width:auto}
+.wrap{overflow-x:auto;background:var(--card);border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+table{width:100%;border-collapse:collapse;min-width:560px}
+th{background:var(--blue);color:#fff;text-align:left;padding:9px}
+:root[data-theme="dark"] th,:root:not([data-theme="light"]) th{color:#06121f}
+td{padding:9px;border-bottom:1px solid var(--line)}
+td.a{display:flex;gap:6px;white-space:nowrap}
+.badge{padding:2px 10px;border-radius:12px;font-size:.85rem;font-weight:bold;background:var(--light);color:var(--dark)}
+.form{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin:10px 0;max-width:560px}
+.form label{display:block;font-weight:bold;margin:10px 0 3px}
+.err{background:#fdecea;color:#b71c1c;border:1px solid #f5c2c0;padding:8px 12px;border-radius:6px;margin:8px 0}
+.note{background:var(--light);color:var(--text);padding:8px 12px;border-radius:6px;margin:8px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.pwrow{display:flex;gap:6px}.pwrow input{flex:1}.login{margin:30px auto}
+</style>
+</head>
+<body>
+<header>
+  <h1>Krissel’s Lost and Found Management</h1>
+  <nav id="nav"></nav>
+</header>
+<main id="app"><p class="muted">Loading…</p></main>
+<script>
+"use strict";
+const TYPES=["Student","Teacher","Staff","Visitor"], STATUSES=["Lost","Found","Claimed"];
+const S={person:[],item:[],claim:[],users:[]};
+let db=null, tab="dash", form=null, msg="", canWrite=true, who="", q="", fs="", me=null, usersReady=false;
+const today=()=>new Date().toISOString().slice(0,10);
+const byId=(t,id)=>S[t].find(x=>x.id===id);
+const pname=id=>(byId("person",id)||{}).full_name||"(deleted)";
+const iname=id=>(byId("item",id)||{}).item_name||"(deleted)";
+
+function h(tag,attrs,...kids){
+  const el=document.createElement(tag);
+  for(const k in(attrs||{})){
+    if(k.startsWith("on"))el.addEventListener(k.slice(2),attrs[k]);
+    else if(k==="value")el.value=attrs[k];
+    else if(attrs[k]===true)el.setAttribute(k,"");
+    else if(attrs[k]!==false&&attrs[k]!=null)el.setAttribute(k,attrs[k]);
+  }
+  for(const c of kids.flat())if(c!=null)el.append(c.nodeType?c:document.createTextNode(String(c)));
+  return el;
+}
+const go=t=>{tab=t;form=null;msg="";q="";fs="";render()};
+const flash=m=>{msg=m;render()};
+
+/* ---------- data actions (the ERD rules live here) ---------- */
+async function save(type,id,data){
+  const col=db.collection(type);
+  if(id)await col.doc(id).update(data); else await col.add(data);
+}
+async function addClaim(d){
+  const item=byId("item",d.item_id);
+  if(!item||item.item_status==="Claimed")throw new Error("This item has already been claimed.");
+  await db.collection("item").doc(d.item_id).update({item_status:"Claimed"});
+  try{await db.collection("claim").add(d)}
+  catch(e){await db.collection("item").doc(d.item_id).update({item_status:item.item_status});throw e}
+}
+async function remove(type,id){
+  if(!confirm("Delete this record?"))return;
+  try{
+    if(type==="person"&&(S.item.some(i=>i.person_id===id)||S.claim.some(c=>c.person_id===id)))
+      throw new Error("Cannot delete: this person is linked to items or claims. Delete those first.");
+    if(type==="item"&&S.claim.some(c=>c.item_id===id))
+      throw new Error("Cannot delete: this item has a claim record. Delete the claim first.");
+    if(type==="claim"){
+      const c=byId("claim",id);
+      await db.collection("claim").doc(id).delete();
+      const left=S.claim.filter(x=>x.id!==id&&x.item_id===c.item_id).length;
+      const it=byId("item",c.item_id);
+      if(!left&&it&&it.item_status==="Claimed")await db.collection("item").doc(c.item_id).update({item_status:"Found"});
+    }else await db.collection(type).doc(id).delete();
+    flash("Record deleted.");
+  }catch(e){flash("⚠ "+e.message)}
+}
+
+/* ---------- forms ---------- */
+function fld(label,input){return[h("label",{},label),input]}
+function sel(name,opts,val,dis){
+  const s=h("select",{name,required:true,disabled:!!dis},
+    h("option",{value:""},"-- Choose --"),
+    opts.map(o=>h("option",{value:o[0]},o[1])));
+  s.value=val||"";return s;
+}
+function formView(){
+  const{type,id}=form, cur=id?byId(type,id):{}, errs=h("div");
+  const f=h("form",{class:"form"});
+  let fields;
+  const people=S.person.slice().sort((a,b)=>a.full_name.localeCompare(b.full_name)).map(p=>[p.id,p.full_name+" ("+p.person_type+")"]);
+  if(type==="person"){
+    fields=[fld("Full name",h("input",{name:"full_name",maxlength:100,required:true,value:cur.full_name||""})),
+      fld("Contact number",h("input",{name:"contact_number",maxlength:20,required:true,value:cur.contact_number||""})),
+      fld("Person type",sel("person_type",TYPES.map(t=>[t,t]),cur.person_type||"Student"))];
+  }else if(type==="item"){
+    const locked=cur.item_status==="Claimed";
+    fields=[fld("Item name",h("input",{name:"item_name",maxlength:100,required:true,value:cur.item_name||""})),
+      fld("Reported by",sel("person_id",people,cur.person_id)),
+      fld("Status",locked?h("input",{value:"Claimed",disabled:true}):sel("item_status",["Lost","Found"].map(t=>[t,t]),cur.item_status||"Lost"))];
+  }else{
+    const open=S.item.filter(i=>i.item_status!=="Claimed").map(i=>[i.id,i.item_name+" ("+i.item_status+")"]);
+    fields=[fld("Item",id?h("input",{value:iname(cur.item_id),disabled:true}):sel("item_id",open,"")),
+      fld("Claimed by",sel("person_id",people,cur.person_id)),
+      fld("Claim date",h("input",{type:"date",name:"claim_date",max:today(),required:true,value:cur.claim_date||today()}))];
+  }
+  f.append(h("h2",{},(id?"Edit ":"Add ")+type),errs,...fields.flat(),
+    h("div",{class:"row"},h("button",{class:"btn",type:"submit"},"Save"),
+      h("button",{class:"btn o",type:"button",onclick:()=>{form=null;render()}},"Cancel")));
+  f.addEventListener("submit",async ev=>{
+    ev.preventDefault();
+    const d=Object.fromEntries(new FormData(f));
+    const bad=[];
+    if(type==="person"){
+      d.full_name=d.full_name.trim();
+      if(!d.full_name)bad.push("Full name is required.");
+      if(!/^[0-9+\-\s]{7,20}$/.test(d.contact_number.trim()))bad.push("Contact number: 7-20 characters (numbers, +, - and spaces).");
+      d.contact_number=d.contact_number.trim();
+    }
+    if(type==="item"){d.item_name=d.item_name.trim();if(!d.item_name)bad.push("Item name is required.");
+      if(!byId("person",d.person_id))bad.push("Choose who reported the item.");}
+    if(type==="claim"){
+      if(!id&&!byId("item",d.item_id))bad.push("Choose an item.");
+      if(!byId("person",d.person_id))bad.push("Choose who is claiming.");
+      if(!d.claim_date||d.claim_date>today())bad.push("Enter a valid date (not in the future).");
+    }
+    if(bad.length){errs.replaceChildren(...bad.map(b=>h("div",{class:"err"},b)));return}
+    try{
+      if(type==="claim"&&!id)await addClaim(d);
+      else await save(type,id,d);
+      form=null;flash("Saved.");
+    }catch(e){errs.replaceChildren(h("div",{class:"err"},e.message||"Could not save."))}
+  });
+  return f;
+}
+
+/* ---------- views ---------- */
+function table(cols,rows,type){
+  const hd=h("tr",{},cols.map(c=>h("th",{},c[0])),canWrite?h("th",{},"Actions"):null);
+  const body=rows.length?rows.map(r=>h("tr",{},
+      cols.map(c=>h("td",{},c[1](r))),
+      canWrite?h("td",{class:"a"},
+        h("button",{class:"btn s",onclick:()=>{form={type,id:r.id};msg="";render()}},"Edit"),
+        h("button",{class:"btn s d",onclick:()=>remove(type,r.id)},"Delete")):null))
+    :[h("tr",{},h("td",{colspan:cols.length+1,class:"muted"},"No records yet."))];
+  return h("div",{class:"wrap"},h("table",{},h("thead",{},hd),h("tbody",{},body)));
+}
+const badge=s=>h("span",{class:"badge"},s);
+function head(title,type,withFilter){
+  return[h("div",{class:"row",style:"justify-content:space-between;align-items:center"},h("h2",{},title),
+      canWrite?h("button",{class:"btn",onclick:()=>{form={type,id:null};msg="";render()}},"+ Add"):null),
+    h("div",{class:"bar"},
+      h("input",{placeholder:"Search…",value:q,oninput:e=>{q=e.target.value;render(true)}}),
+      withFilter?h("select",{onchange:e=>{fs=e.target.value;render()}},h("option",{value:""},"All statuses"),
+        STATUSES.map(s=>{const o=h("option",{value:s},s);if(s===fs)o.selected=true;return o})):null)];
+}
+const has=(...v)=>!q||v.some(x=>String(x).toLowerCase().includes(q.toLowerCase()));
+
+function view(){
+  if(form)return[formView()];
+  if(tab==="dash"){
+    const n=s=>S.item.filter(i=>i.item_status===s).length;
+    return[h("h2",{},"Welcome, "+me.full_name+"!"),h("p",{class:"muted"},"Here is a quick summary of the system."),
+      h("div",{class:"cards"},[["Lost Items",n("Lost")],["Found Items",n("Found")],["Claimed Items",n("Claimed")],["Persons",S.person.length]]
+        .map(c=>h("div",{class:"card"},h("b",{},c[1]),c[0]))),
+      h("div",{class:"row"},["items","persons","claims"].map(t=>h("button",{class:"btn",onclick:()=>go(t)},"Manage "+t)))];
+  }
+  if(tab==="persons")return[...head("Persons","person"),
+    table([["Full Name",r=>h("b",{},r.full_name)],["Contact",r=>r.contact_number],["Type",r=>r.person_type],
+      ["Items Reported",r=>S.item.filter(i=>i.person_id===r.id).length]],
+      S.person.filter(r=>has(r.full_name,r.contact_number,r.person_type)).sort((a,b)=>a.full_name.localeCompare(b.full_name)),"person")];
+  if(tab==="items")return[...head("Items","item",true),
+    table([["Item Name",r=>h("b",{},r.item_name)],["Reported By",r=>pname(r.person_id)],["Status",r=>badge(r.item_status)]],
+      S.item.filter(r=>(!fs||r.item_status===fs)&&has(r.item_name,pname(r.person_id))).sort((a,b)=>a.item_name.localeCompare(b.item_name)),"item")];
+  return[...head("Claims","claim"),
+    table([["Item",r=>h("b",{},iname(r.item_id))],["Claimed By",r=>pname(r.person_id)],["Claim Date",r=>r.claim_date]],
+      S.claim.filter(r=>has(iname(r.item_id),pname(r.person_id))).sort((a,b)=>b.claim_date.localeCompare(a.claim_date)),"claim")];
+}
+
+function render(keepFocus){
+  const nav=document.getElementById("nav");
+  nav.replaceChildren(...(me?[["dash","Dashboard"],["items","Items"],["persons","Persons"],["claims","Claims"]]
+    .map(t=>h("button",{class:tab===t[0]?"on":"",onclick:()=>go(t[0])},t[1])).concat(h("button",{onclick:logout,style:"margin-left:auto;background:#fff;color:#0d47a1"},"Logout")):[]));
+  const app=document.getElementById("app"), focused=keepFocus&&document.activeElement&&document.activeElement.tagName==="INPUT";
+  app.replaceChildren(...[msg?h("div",{class:"note"},msg):null,
+    !db?h("div",{class:"err"},"The database is not available. Open this page while signed in to Claude."):null,
+    !canWrite&&me?h("div",{class:"note"},"You have view-only access."):null,...(!db?[]:!usersReady?[h('p',{class:'muted'},'Loading…')]:me?view():[loginView()])].filter(Boolean));
+  if(focused){const i=app.querySelector(".bar input");if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}}
+}
+
+/* ---------- login (passwords are salted + hashed with PBKDF2, never stored as plain text) ---------- */
+const enc=new TextEncoder();
+const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const newSalt=()=>hex(crypto.getRandomValues(new Uint8Array(16)));
+async function hashPw(pw,salt){
+  const k=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveBits']);
+  return hex(await crypto.subtle.deriveBits({name:'PBKDF2',salt:enc.encode(salt),iterations:100000,hash:'SHA-256'},k,256));
+}
+function saveSession(id){try{if(id)sessionStorage.setItem('lf_user',id);else sessionStorage.removeItem('lf_user')}catch(e){}}
+function loadSession(){try{return sessionStorage.getItem('lf_user')}catch(e){return null}}
+function logout(){me=null;saveSession(null);tab='dash';form=null;msg='';render()}
+function loginView(){
+  const first=S.users.length===0, errs=h('div');
+  const bad=(...m)=>errs.replaceChildren(...m.map(x=>h('div',{class:'err'},x)));
+  const pw=h('input',{type:'password',name:'password',required:true,autocomplete:first?'new-password':'current-password'});
+  const tg=h('button',{type:'button',class:'btn o s',onclick:()=>{const s=pw.type==='password';pw.type=s?'text':'password';tg.textContent=s?'Hide':'Show'}},'Show');
+  const f=h('form',{class:'form login'},
+    h('h2',{},first?'Create First Administrator':'Login'),
+    h('p',{class:'muted'},first?'No account exists yet. Create the first administrator.':'Please log in to continue.'),errs,
+    first?fld('Full name',h('input',{name:'full_name',maxlength:100,required:true})):null,
+    fld('Username',h('input',{name:'username',maxlength:30,required:true,autocomplete:'username'})),
+    fld('Password'+(first?' (min. 8 characters)':''),h('div',{class:'pwrow'},pw,tg)),
+    first?fld('Confirm password',h('input',{type:'password',name:'confirm',required:true,autocomplete:'new-password'})):null,
+    h('div',{class:'row'},h('button',{class:'btn',type:'submit',style:'width:100%'},first?'Create Administrator':'Login')));
+  f.addEventListener('submit',async ev=>{
+    ev.preventDefault();
+    const d=Object.fromEntries(new FormData(f)), un=(d.username||'').trim().toLowerCase();
+    try{
+      if(first){
+        const m=[];
+        if(!(d.full_name||'').trim())m.push('Enter your full name.');
+        if(!/^[a-z0-9_]{3,30}$/.test(un))m.push('Username must be 3-30 letters, numbers or underscores.');
+        if(d.password.length<8)m.push('Password must be at least 8 characters.');
+        if(d.password!==d.confirm)m.push('Passwords do not match.');
+        if(m.length)return bad(...m);
+        if(!(await db.collection('users').limit(1).get()).empty)return bad('Setup is already done. Please reload and log in.');
+        const id=newSalt().slice(0,20), salt=newSalt(), name=d.full_name.trim();
+        await db.collection('users').doc(id).set({full_name:name,username:un,salt,password_hash:await hashPw(d.password,salt)});
+        me={id,full_name:name};saveSession(id);render();
+      }else{
+        const u=S.users.find(x=>x.username===un);
+        if(!u||(await hashPw(d.password,u.salt))!==u.password_hash)return bad('Incorrect username or password.');
+        me={id:u.id,full_name:u.full_name};saveSession(u.id);render();
+      }
+    }catch(e){bad('Something went wrong. Please try again.')}
+  });
+  return f;
+}
+
+/* ---------- local database (saved in this browser with localStorage) ---------- */
+function localDB(){
+  const K='lost_found_data_v1'; let data={};
+  try{data=JSON.parse(localStorage.getItem(K))||{}}catch(e){data={}}
+  const subs={};
+  const save=()=>{try{localStorage.setItem(K,JSON.stringify(data))}catch(e){}};
+  const rid=()=>hex(crypto.getRandomValues(new Uint8Array(10)));
+  const snap=t=>{const docs=Object.keys(data[t]||{}).map(id=>({id,data:()=>data[t][id]}));return{docs,size:docs.length,empty:!docs.length}};
+  const fire=t=>(subs[t]||[]).forEach(f=>f(snap(t)));
+  const table=t=>(data[t]=data[t]||{});
+  const col=t=>({
+    onSnapshot(next){(subs[t]=subs[t]||[]).push(next);setTimeout(()=>next(snap(t)),0)},
+    limit(){return{get:async()=>snap(t)}},
+    async add(v){const id=rid();table(t)[id]=v;save();fire(t);return{id}},
+    doc:id=>({
+      async set(v){table(t)[id]=v;save();fire(t)},
+      async update(v){if(table(t)[id])table(t)[id]={...table(t)[id],...v};save();fire(t)},
+      async delete(){delete table(t)[id];save();fire(t)}
+    })
+  });
+  return{collection:col};
+}
+
+/* ---------- start ---------- */
+db=localDB();
+render();
+for(const t of['person','item','claim','users'])
+  db.collection(t).onSnapshot(s=>{
+    S[t]=s.docs.map(d=>({id:d.id,...d.data()}));
+    if(t==='users'&&!usersReady){usersReady=true;const u=S.users.find(x=>x.id===loadSession());if(u)me={id:u.id,full_name:u.full_name};render()}
+    else if(me)render(true)});
+</script>
+</body>
+</html>
